@@ -2,9 +2,29 @@ require 'unimidi'
 require 'serialport'
 
 class SerialAdaptor
-  def initialize
+  def initialize port
+    @port = SerialPort.new port, 115200, 8, 1, SerialPort::NONE
   end
-  def write
+
+  def write array
+    i = 21
+    11.times do
+      byte = byte = 0
+      byte = byte + 1 if array[i] == :on
+      i = i + 1
+      7.times do
+        byte = byte << 1
+        byte = byte + 1 if array[i] == :on
+        i = i + 1
+      end
+      @port.putc byte
+      printf "%08b", byte
+    end
+    puts ""
+  end
+
+  def shutdown
+    @port.close
   end
 end
 
@@ -26,13 +46,31 @@ class MidiAdaptor
       puts data.length
       i = 0
       begin
-        if data[i] == 144 
-          @note_array[data[i+1]] = :on
-          i = i + 3
-        elsif data[i] == 128
-          @note_array[data[i+1]] = :off
-          i = i + 2
+        if data[i] & 144  == 144 #note on
+          puts "On"
+          j = 1
+          loop do 
+            if i + j >= data.length or data[i + j] & 128 == 128 #a status byte
+              break
+            else
+              @note_array[data[i+j]] = :on
+              j = j + 2
+            end
+          end
+            i = i + j
+          i = i + 1
+        elsif data[i] & 128  == 128 #note off
+          if data.length == 1
+            @note_array.each do |note|
+              note = :off
+            end
+          else
+            puts "Off"
+            @note_array[data[i+1]] = :off
+            i = i + 2
+          end
         else
+          @note_array[data[i]] = :off
           i = i + 1
         end
       end until i >= data.length
@@ -43,21 +81,26 @@ end
 def print_array
   out = ""
   @ma.note_array.each do |n|
-    out << '0' if n == :on
-    out << 'X' if n == :off
+    out << '1' if n == :on
+    out << '0' if n == :off
   end
   puts out
 end
 
 def main
 
-  sa = SerialAdaptor.new
+  sa = SerialAdaptor.new "/dev/ttyACM0"
   @ma = MidiAdaptor.new
 
   loop do
+  #  print_array
     @ma.update_array
-    print_array
+    sa.write @ma.note_array
   end
+end
+
+at_exit do
+  @port.shutdown
 end
 
 main
